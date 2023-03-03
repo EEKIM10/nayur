@@ -1,5 +1,7 @@
-# Nayur
-<span style="text-align: center">*The least helpful AUR helper</span>
+<div style="text-align: center">
+<h1>Nayur</h1>
+<i>The least helpful AUR helper</i>
+</div>
 
 ------
 
