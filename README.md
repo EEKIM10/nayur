@@ -1,6 +1,6 @@
 <div style="text-align: center">
 <h1 align="center">Nayur</h1>
-<i align="center">The least helpful AUR helper</i>
+<p align="center"><i>The least helpful AUR helper</i></p>
 </div>
 
 ------
