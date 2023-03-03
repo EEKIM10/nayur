@@ -1,4 +1,5 @@
 import os
+import re
 
 import click
 import sys
@@ -10,9 +11,12 @@ import platform
 import logging
 from typing import Tuple
 
+from rich.progress import track, Progress
+
 from .const import console, CACHE_DIR, session
 from .out import error, warn, info, debug as _debug
 from .lib import dir_exists, dir_is_empty
+from .aur import check_deps, find_deps
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +49,20 @@ def cache():
 
 
 @cache.command()
+@click.option("--with-dependencies", "--deps", is_flag=True, help="Gets AUR dependencies.")
+@click.option("--with-optional-dependencies", "--optdeps", is_flag=True, help="Gets AUR optional dependencies too.")
+@click.option("--without-make-dependencies", "--no-makedeps", is_flag=True, help="Disables cloning make dependencies.")
 @click.argument("pkg_names", required=True, type=str, nargs=-1)
-def get(pkg_names: Tuple[str]):
+def get(
+        with_dependencies: bool,
+        with_optional_dependencies: bool,
+        without_make_dependencies: bool,
+        pkg_names: Tuple[str]
+):
     """Downloads a package
 
     This does not install it."""
+    clone_targets = set()
     for pkg_name in pkg_names:
         with console.status(f"[bold green]Preparing {pkg_name}") as status:
             pkg_name = pkg_name.lower()
@@ -108,6 +121,55 @@ def get(pkg_names: Tuple[str]):
             else:
                 if not any(pkg_path.iterdir()):
                     warn(f"Warn - {pkg_name} (empty repository)")
+
+                if with_dependencies:
+                    status.update(f"Looking for dependencies for {pkg_name}")
+                    check = find_deps(
+                        pkg_name,
+                        optional=with_optional_dependencies,
+                        make=not without_make_dependencies
+                    )
+                    info("Dependencies to clone for %s: %s" % (pkg_name, ", ".join(check)))
+                    if check:
+                        clone_targets.update(check)
+
+                info(f"Ok - {pkg_name}")
+
+    with Progress() as progress:
+        task = progress.add_task("Cloning dependencies", total=len(clone_targets))
+        for pkg_name in clone_targets:
+            progress.update(task, advance=1)
+            pkg_path = CACHE_DIR / pkg_name
+            if pkg_path.exists():
+                continue
+
+            pkg_path.mkdir(parents=True, exist_ok=True)
+
+            try:
+                result = subprocess.run(
+                    (
+                        "git",
+                        "clone",
+                        f"https://aur.archlinux.org/{pkg_name}.git",
+                        str(pkg_path),
+                    ),
+                    capture_output=True,
+                    encoding="utf-8",
+                )
+                _debug("Exit code: " + str(result.returncode))
+                _debug("STDOUT:")
+                _debug(result.stdout)
+                _debug("STDERR:")
+                _debug(result.stderr)
+                result.check_returncode()
+            except subprocess.CalledProcessError as e:
+                console.print(f"[red]Failed to clone repository {pkg_name}. {e}")
+                shutil.rmtree(pkg_path)
+                continue
+            else:
+                if not any(pkg_path.iterdir()):
+                    warn(f"Warn - {pkg_name} (empty repository)")
+
                 info(f"Ok - {pkg_name}")
 
 
@@ -131,11 +193,13 @@ def clear():
     with console.status("[bold green]Preparing") as status:
         for pkg in CACHE_DIR.iterdir():
             status.update(f"[bold green]Removing {pkg.name}")
+            if not pkg.is_dir():
+                continue
             try:
                 shutil.rmtree(pkg)
             except OSError as e:
                 console.print(f"[red]Failed to remove package. {e}")
-                return
+                continue
             else:
                 _debug(f"OK - {pkg.name}")
         else:
