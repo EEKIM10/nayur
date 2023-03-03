@@ -6,6 +6,7 @@ import subprocess
 import shutil
 import requests
 import glob
+import platform
 import logging
 from typing import Tuple
 
@@ -224,7 +225,8 @@ def search(brief: bool, pkg_name: str):
 
 @main.command()
 @click.argument("pkg_names", required=True, type=str, nargs=-1)
-def build(pkg_names: Tuple[str]):
+@click.pass_context
+def build(ctx: click.Context, pkg_names: Tuple[str]):
     """Builds packages, preparing them for install."""
     ok = []
     nok = []
@@ -235,12 +237,13 @@ def build(pkg_names: Tuple[str]):
             error(f"Package {pkg_name} is not cached locally. Did you run `nayur cache get {pkg_name}`?")
             continue
 
-        info(f"Running makepkg -s in {pkg_dir}")
+        info(f"Running makepkg -s -f --noconfirm in {pkg_dir}")
         try:
             result = subprocess.run(
                 (
                     "makepkg",
                     "-s",
+                    "-f",
                     "--noconfirm"
                 ),
                 cwd=pkg_dir
@@ -250,7 +253,8 @@ def build(pkg_names: Tuple[str]):
             nok.append(pkg_name)
             return
         else:
-            os.system("clear")
+            if ctx.obj["DEBUG"] is False:
+                os.system("clear")
             ok.append(pkg_name)
 
     for pkg_name in ok:
@@ -262,43 +266,55 @@ def build(pkg_names: Tuple[str]):
 
 @main.command()
 @click.argument("pkg_names", required=True, type=str, nargs=-1)
-def install(pkg_names: Tuple[str]):
+@click.pass_context
+def install(ctx: click.Context, pkg_names: Tuple[str]):
     """Installs a package"""
-    ok = nok = []
+    ok = []
+    nok = []
     for pkg_name in pkg_names:
         pkg_name = pkg_name.lower()
-        with console.status(f"[bold green]Preparing {pkg_name}") as status:
-            pkg_dir = CACHE_DIR / pkg_name
-            if not dir_exists(pkg_dir):
-                error(f"Package {pkg_name} is not cached locally. Did you run `nayur cache get {pkg_name}`?")
-                continue
+        pkg_dir = CACHE_DIR / pkg_name
+        if not dir_exists(pkg_dir):
+            _debug(f"Package {pkg_name} is not cached locally. Did you run `nayur cache get {pkg_name}`?")
+            continue
 
-        files = glob.glob("*.tar.zst", root_dir=pkg_dir)
+        pattern = f"*-{platform.machine()}.pkg.tar.zst"
+        _debug("Looking for build files with pattern: " + repr(pattern))
+        files = glob.glob(pattern, root_dir=pkg_dir)
         _debug(f"Detected build files: {', '.join(files)}")
         files = sorted(files, key=lambda file: (pkg_dir / file).stat().st_mtime_ns, reverse=True)
+        if not files:
+            _debug(f"No build files detected for {pkg_name}. Did you run `nayur build {pkg_name}`?")
+            nok.append(pkg_name)
+            continue
         for target_file in files:
             path = pkg_dir / target_file
-            info(f"Trying `pacman -U {path}`")
+            info(f"Trying {path}")
             try:
                 result = subprocess.run(
                     (
                         "sudo",
                         "pacman",
                         "-U",
+                        "--noconfirm",
                         str(path.absolute())
                     )
                 )
                 result.check_returncode()
+                _debug(f"Command: {' '.join(result.args)}")
+                _debug(f"Return code: {result.returncode}")
             except subprocess.CalledProcessError:
                 warn(f"Failed on {target_file}")
                 continue
             else:
+                os.remove(path)
                 ok.append(pkg_name)
                 break
         else:
             nok.append(pkg_name)
 
-    os.system("clear")
+    if ctx.obj["DEBUG"] is False:
+        os.system("clear")
     for pkg_name in ok:
         info("Ok - " + pkg_name)
 
