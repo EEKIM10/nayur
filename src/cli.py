@@ -116,6 +116,8 @@ def _list():
     with console.status("[bold green]Preparing") as status:
         status.update("[bold green]Listing packages")
         for pkg in sorted(CACHE_DIR.iterdir(), key=lambda p: p.name):
+            if (CACHE_DIR / pkg).is_dir() is False:
+                continue
             if not dir_is_empty(CACHE_DIR / pkg):
                 info("* " + pkg.name)
             else:

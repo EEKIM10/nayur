@@ -1,9 +1,19 @@
+import subprocess
+from os import getenv
 from pathlib import Path
 from setuptools import setup
 
+base_version = getenv("NAYUR_BUILD_VERSION", "0.1.0a1")
+if getenv("NAYUR_RELEASE", "0") == "1":
+    version = base_version
+else:
+    _commit = subprocess.run(("git", "rev-list", "--count", "HEAD"), capture_output=True, encoding="utf-8").stdout
+    _commit = _commit.strip()
+    version = f"{base_version}.dev{_commit}"
+
 setup(
     name='nayur',
-    version='0.1.0a1',
+    version=version,
     packages=['src'],
     url='https://github.com/EEKIM10/nayur',
     license='GLP3',
